@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import ssl
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -120,6 +121,9 @@ def load_cached_klines(item: Item) -> list[dict[str, Any]]:
     candidates = sorted(OUTPUT_DIR.glob("codex_daily_observation_*.xlsx"), reverse=True)
     if OUTPUT_FILE.exists():
         candidates.insert(0, OUTPUT_FILE)
+    if (BASE_DIR / "latest_report.xlsx").exists():
+        candidates.append(BASE_DIR / "latest_report.xlsx")
+    candidates.extend(sorted(BASE_DIR.glob("codex_daily_observation_*.xlsx"), reverse=True))
 
     seen: set[Path] = set()
     for candidate in candidates:
@@ -161,6 +165,11 @@ def load_cached_klines(item: Item) -> list[dict[str, Any]]:
 
 def fetch_json(url: str) -> dict[str, Any]:
     last_error: Exception | None = None
+    try:
+        return fetch_json_with_requests(url)
+    except Exception as exc:  # noqa: BLE001
+        last_error = exc
+
     for attempt in range(1, 4):
         try:
             request = urllib.request.Request(
@@ -178,10 +187,36 @@ def fetch_json(url: str) -> dict[str, Any]:
             last_error = exc
             time.sleep(attempt)
 
-    try:
-        return fetch_json_with_powershell(url)
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Failed to fetch url after retries: {last_error}; powershell: {exc}") from exc
+    if shutil.which("powershell.exe"):
+        try:
+            return fetch_json_with_powershell(url)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Failed to fetch url after retries: {last_error}; powershell: {exc}") from exc
+
+    raise RuntimeError(f"Failed to fetch url after retries: {last_error}")
+
+
+def fetch_json_with_requests(url: str) -> dict[str, Any]:
+    import requests
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+        "Referer": "https://quote.eastmoney.com/",
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Connection": "close",
+    }
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            response = requests.get(url, headers=headers, timeout=25)
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            time.sleep(attempt)
+    raise RuntimeError(f"requests fetch failed: {last_error}")
 
 
 def fetch_json_with_powershell(url: str) -> dict[str, Any]:
