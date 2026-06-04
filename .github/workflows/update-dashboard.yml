@@ -1,0 +1,60 @@
+name: Update A-share dashboard
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Beijing/Singapore 09:00, GitHub cron uses UTC.
+    - cron: "0 1 * * 1-5"
+    # Beijing/Singapore 16:30, GitHub cron uses UTC.
+    - cron: "30 8 * * 1-5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-a-share-dashboard
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-github.txt
+
+      - name: Build Excel report
+        run: python scripts/build_codex_daily_excel.py
+
+      - name: Build HTML dashboard
+        run: python scripts/build_dashboard.py
+
+      - name: Verify dashboard
+        run: python scripts/verify_dashboard.py
+
+      - name: Publish files for GitHub Pages
+        run: python scripts/publish_pages_root.py
+
+      - name: Commit latest dashboard
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html .nojekyll latest_report.xlsx codex_daily_observation_*.xlsx output/codex_daily_observation_*.xlsx output/dashboard.html
+          if git diff --cached --quiet; then
+            echo "No dashboard changes to commit."
+          else
+            git commit -m "Update A-share dashboard"
+            git push
+          fi
