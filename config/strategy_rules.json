@@ -1,0 +1,107 @@
+{
+  "portfolio_rules": {
+    "trial_position_pct": 0.15,
+    "max_single_position_pct": 0.25,
+    "portfolio_pause_loss_pct": 0.1,
+    "add_position_rule": "只在个股、板块、大盘至少两项顺风且已有浮盈时考虑加仓。",
+    "quant_note": "不和高频量化比速度，降低交易频率，用规则减少情绪干扰。"
+  },
+  "market_indices": [
+    {
+      "code": "000300",
+      "name": "沪深300",
+      "sina_symbol": "sh000300"
+    },
+    {
+      "code": "000852",
+      "name": "中证1000",
+      "sina_symbol": "sh000852"
+    },
+    {
+      "code": "399006",
+      "name": "创业板指",
+      "sina_symbol": "sz399006"
+    }
+  ],
+  "stock_profiles": [
+    {
+      "stock_code": "605111",
+      "stock_name": "新洁能",
+      "sector_candidates": [
+        "半导体",
+        "功率半导体",
+        "第三代半导体"
+      ],
+      "benchmark": "000300",
+      "buy_thesis": "功率半导体国产替代和新能源、工业需求修复。",
+      "invalidation": "行业景气继续下行、毛利率恶化、跌破长期趋势且无法收回。",
+      "review_loss_pct": 0.1
+    },
+    {
+      "stock_code": "600703",
+      "stock_name": "三安光电",
+      "sector_candidates": [
+        "光学光电子",
+        "半导体",
+        "第三代半导体",
+        "LED"
+      ],
+      "benchmark": "000300",
+      "buy_thesis": "LED、化合物半导体和光电材料景气改善。",
+      "invalidation": "主营盈利能力持续低迷、板块强而个股长期弱、关键趋势破坏。",
+      "review_loss_pct": 0.1
+    },
+    {
+      "stock_code": "002245",
+      "stock_name": "蔚蓝锂芯",
+      "sector_candidates": [
+        "电池",
+        "锂电池"
+      ],
+      "benchmark": "000852",
+      "buy_thesis": "锂电池业务修复和消费电池需求改善。",
+      "invalidation": "锂电产业链继续走弱、业绩修复证据不足、跌破长期趋势。",
+      "review_loss_pct": 0.1
+    },
+    {
+      "stock_code": "600522",
+      "stock_name": "中天科技",
+      "sector_candidates": [
+        "通信设备",
+        "光通信模块",
+        "5G概念"
+      ],
+      "benchmark": "000300",
+      "buy_thesis": "海缆、通信和电力业务订单支撑，光通信景气提供弹性。",
+      "invalidation": "订单或利润率明显不及预期、通信/海缆主线转弱、跌破长期趋势。",
+      "review_loss_pct": 0.1
+    }
+  ],
+  "discipline_rules": [
+    {
+      "rule": "轻仓试探",
+      "meaning": "趋势未明时不重仓，初始观察仓按小比例处理。",
+      "project_use": "报告只提示是否适合加风险，不直接给买卖指令。"
+    },
+    {
+      "rule": "硬复查线",
+      "meaning": "止损是纠错，不是失败；亏损越大，回本越难。",
+      "project_use": "默认较买入价回撤10%触发复查，可在 strategy_rules.json 调整。"
+    },
+    {
+      "rule": "过程优先",
+      "meaning": "按规则亏钱比凭感觉赚钱更有价值。",
+      "project_use": "历史记录保存每次触发原因，复盘时看是否按计划执行。"
+    },
+    {
+      "rule": "倾听市场",
+      "meaning": "少预测，多看个股、板块、大盘是否同时给出信号。",
+      "project_use": "加入板块和大盘环境因子，环境弱时默认暂不加仓。"
+    },
+    {
+      "rule": "远离速度战",
+      "meaning": "量化让短线追涨杀跌更难，散户不宜和机器比速度。",
+      "project_use": "把工具定位为收盘后观察台账，降低交易频率。"
+    }
+  ]
+}
