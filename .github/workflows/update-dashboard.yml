@@ -3,10 +3,10 @@ name: Update A-share dashboard
 on:
   workflow_dispatch:
   schedule:
-    # Beijing/Singapore 09:00, GitHub cron uses UTC.
-    - cron: "0 1 * * 1-5"
-    # Beijing/Singapore 16:30, GitHub cron uses UTC.
-    - cron: "30 8 * * 1-5"
+    # Beijing/Singapore 09:08 and 09:22, GitHub cron uses UTC.
+    - cron: "8,22 1 * * 1-5"
+    # Beijing/Singapore 16:38 and 16:52, GitHub cron uses UTC.
+    - cron: "38,52 8 * * 1-5"
 
 permissions:
   contents: write
