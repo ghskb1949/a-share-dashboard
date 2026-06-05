@@ -4,6 +4,7 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
 
@@ -48,7 +49,7 @@ def build_payload(report_path: Path) -> dict[str, Any]:
         "meta": {
             "reportFile": report_path.name,
             "reportPath": str(report_path),
-            "dashboardGeneratedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "dashboardGeneratedAt": datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S CST"),
         },
         "overview": read_sheet(wb, "今日总览"),
         "maCompare": read_sheet(wb, "MA数据对比"),
