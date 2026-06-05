@@ -8,9 +8,10 @@ import subprocess
 import time
 import urllib.request
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -19,8 +20,9 @@ from openpyxl.utils import get_column_letter
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "output"
-REPORT_DATE = date.today().strftime("%Y-%m-%d")
-END_DATE = date.today().strftime("%Y%m%d")
+BEIJING_NOW = datetime.now(ZoneInfo("Asia/Shanghai"))
+REPORT_DATE = BEIJING_NOW.strftime("%Y-%m-%d")
+END_DATE = BEIJING_NOW.strftime("%Y%m%d")
 START_DATE = "20240401"
 OUTPUT_FILE = OUTPUT_DIR / f"codex_daily_observation_{REPORT_DATE}.xlsx"
 
