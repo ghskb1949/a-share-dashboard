@@ -2,6 +2,14 @@ name: Update A-share dashboard
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/update-dashboard.yml"
+      - "scripts/**"
+      - "config/**"
+      - "requirements-github.txt"
   schedule:
     # Beijing/Singapore 09:08 and 09:22, GitHub cron uses UTC.
     - cron: "8,22 1 * * 1-5"
