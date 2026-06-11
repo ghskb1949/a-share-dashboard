@@ -25,6 +25,8 @@ REPORT_DATE = BEIJING_NOW.strftime("%Y-%m-%d")
 END_DATE = BEIJING_NOW.strftime("%Y%m%d")
 START_DATE = "20240401"
 OUTPUT_FILE = OUTPUT_DIR / f"codex_daily_observation_{REPORT_DATE}.xlsx"
+DATA_AUDIT: dict[str, dict[str, Any]] = {}
+EASTMONEY_AVAILABLE: bool | None = None
 
 
 @dataclass
@@ -50,6 +52,13 @@ ITEMS = [
     Item("sector", "BK1033", "电池", "90.BK1033"),
     Item("sector", "BK0736", "通信设备", "90.BK0736"),
 ]
+
+SECTOR_BASKETS = {
+    "半导体": ["688981", "603501", "600584", "002371", "688041"],
+    "光学光电子": ["000725", "002456", "300433", "002273", "600707"],
+    "电池": ["300750", "002074", "300014", "002460", "002709"],
+    "通信设备": ["000063", "300308", "300502", "600498", "002281"],
+}
 
 
 def is_number(value: Any) -> bool:
@@ -78,7 +87,116 @@ def pct(value: float | None) -> float | None:
     return float(value)
 
 
+def record_data_audit(item: Item, source: str, rows: list[dict[str, Any]], note: str = "") -> None:
+    DATA_AUDIT[item.code] = {
+        "类别": item.kind,
+        "代码": item.code,
+        "名称": item.name,
+        "数据来源": source,
+        "是否缓存": "是" if source == "Excel缓存" else "否",
+        "最新行情日期": rows[-1]["date"] if rows else None,
+        "行情行数": len(rows),
+        "说明": note,
+    }
+
+
+def tencent_symbol(item: Item) -> str:
+    prefix = "sh" if item.secid.startswith("1.") else "sz"
+    return f"{prefix}{item.code}"
+
+
+def stock_item(code: str) -> Item:
+    market = "1" if code.startswith(("5", "6", "9")) else "0"
+    return Item("stock", code, code, f"{market}.{code}")
+
+
+def fetch_tencent_klines(item: Item) -> list[dict[str, Any]]:
+    if item.kind not in {"stock", "index"}:
+        return []
+
+    symbol = tencent_symbol(item)
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={symbol},day,,,1023,qfq"
+    payload = fetch_json(url)
+    node = (payload.get("data") or {}).get(symbol) or {}
+    lines = node.get("qfqday") or node.get("day") or []
+    rows: list[dict[str, Any]] = []
+    previous_close: float | None = None
+    for line in lines:
+        if len(line) < 6 or str(line[0]) < START_DATE[:4] + "-" + START_DATE[4:6] + "-" + START_DATE[6:]:
+            continue
+        open_price = float(line[1])
+        close = float(line[2])
+        high = float(line[3])
+        low = float(line[4])
+        volume = float(line[5])
+        change_amount = close - previous_close if previous_close else 0.0
+        pct_change = change_amount / previous_close if previous_close else 0.0
+        amplitude = (high - low) / previous_close if previous_close else 0.0
+        rows.append(
+            {
+                "date": str(line[0]),
+                "open": open_price,
+                "close": close,
+                "high": high,
+                "low": low,
+                "volume": volume,
+                "amount": 0.0,
+                "amplitude": amplitude,
+                "pct_change": pct_change,
+                "change_amount": change_amount,
+                "turnover": None,
+            }
+        )
+        previous_close = close
+    return rows
+
+
+def fetch_sector_basket_klines(item: Item) -> list[dict[str, Any]]:
+    constituents = SECTOR_BASKETS.get(item.name) or []
+    if not constituents:
+        return []
+
+    daily_returns: dict[str, list[float]] = {}
+    daily_volumes: dict[str, float] = {}
+    for code in constituents:
+        rows = fetch_tencent_klines(stock_item(code))
+        if not rows:
+            continue
+        for row in rows:
+            daily_returns.setdefault(row["date"], []).append(float(row["pct_change"]))
+            daily_volumes[row["date"]] = daily_volumes.get(row["date"], 0.0) + float(row["volume"])
+
+    rows: list[dict[str, Any]] = []
+    synthetic_close = 1000.0
+    for date_value in sorted(daily_returns):
+        returns = daily_returns[date_value]
+        if len(returns) < max(3, len(constituents) - 1):
+            continue
+        daily_return = sum(returns) / len(returns)
+        previous_close = synthetic_close
+        synthetic_close = previous_close * (1 + daily_return)
+        open_price = previous_close
+        rows.append(
+            {
+                "date": date_value,
+                "open": open_price,
+                "close": synthetic_close,
+                "high": max(open_price, synthetic_close),
+                "low": min(open_price, synthetic_close),
+                "volume": daily_volumes.get(date_value, 0.0),
+                "amount": 0.0,
+                "amplitude": abs(daily_return),
+                "pct_change": daily_return,
+                "change_amount": synthetic_close - previous_close,
+                "turnover": None,
+            }
+        )
+    return rows
+
+
 def fetch_klines(item: Item) -> list[dict[str, Any]]:
+    global EASTMONEY_AVAILABLE
+
     url = (
         "https://push2his.eastmoney.com/api/qt/stock/kline/get"
         f"?secid={item.secid}"
@@ -87,36 +205,65 @@ def fetch_klines(item: Item) -> list[dict[str, Any]]:
         "&klt=101&fqt=1"
         f"&beg={START_DATE}&end={END_DATE}"
     )
-    try:
-        payload = fetch_json(url)
-    except Exception:
-        cached_rows = load_cached_klines(item)
-        if cached_rows:
-            return cached_rows
-        raise
-    klines = payload.get("data", {}).get("klines")
-    if not klines:
-        raise RuntimeError(f"No kline data for {item.name} {item.secid}")
+    eastmoney_error: Exception | None = None
+    if EASTMONEY_AVAILABLE is not False:
+        try:
+            payload = fetch_json(url)
+            klines = (payload.get("data") or {}).get("klines") or []
+            if klines:
+                rows: list[dict[str, Any]] = []
+                for line in klines:
+                    parts = line.split(",")
+                    rows.append(
+                        {
+                            "date": parts[0],
+                            "open": float(parts[1]),
+                            "close": float(parts[2]),
+                            "high": float(parts[3]),
+                            "low": float(parts[4]),
+                            "volume": float(parts[5]),
+                            "amount": float(parts[6]),
+                            "amplitude": float(parts[7]) / 100,
+                            "pct_change": float(parts[8]) / 100,
+                            "change_amount": float(parts[9]),
+                            "turnover": float(parts[10]) / 100 if parts[10] != "-" else None,
+                        }
+                    )
+                EASTMONEY_AVAILABLE = True
+                record_data_audit(item, "东方财富前复权", rows)
+                return rows
+            eastmoney_error = RuntimeError("东方财富返回空行情")
+            EASTMONEY_AVAILABLE = False
+        except Exception as exc:  # noqa: BLE001
+            eastmoney_error = exc
+            EASTMONEY_AVAILABLE = False
+    else:
+        eastmoney_error = RuntimeError("东方财富已在本次运行中失败，跳过重复请求")
 
-    rows: list[dict[str, Any]] = []
-    for line in klines:
-        parts = line.split(",")
-        rows.append(
-            {
-                "date": parts[0],
-                "open": float(parts[1]),
-                "close": float(parts[2]),
-                "high": float(parts[3]),
-                "low": float(parts[4]),
-                "volume": float(parts[5]),
-                "amount": float(parts[6]),
-                "amplitude": float(parts[7]) / 100,
-                "pct_change": float(parts[8]) / 100,
-                "change_amount": float(parts[9]),
-                "turnover": float(parts[10]) / 100 if parts[10] != "-" else None,
-            }
-        )
-    return rows
+    if item.kind in {"stock", "index"}:
+        try:
+            rows = fetch_tencent_klines(item)
+            if rows:
+                record_data_audit(item, "腾讯前复权", rows, f"东方财富失败：{eastmoney_error}")
+                return rows
+        except Exception as exc:  # noqa: BLE001
+            eastmoney_error = RuntimeError(f"东方财富失败：{eastmoney_error}；腾讯失败：{exc}")
+
+    if item.kind == "sector":
+        try:
+            rows = fetch_sector_basket_klines(item)
+            if rows:
+                note = f"东方财富失败，使用腾讯成分股等权代理：{','.join(SECTOR_BASKETS[item.name])}"
+                record_data_audit(item, "腾讯成分股等权代理", rows, note)
+                return rows
+        except Exception as exc:  # noqa: BLE001
+            eastmoney_error = RuntimeError(f"东方财富失败：{eastmoney_error}；板块代理失败：{exc}")
+
+    cached_rows = load_cached_klines(item)
+    if cached_rows:
+        record_data_audit(item, "Excel缓存", cached_rows, f"联网行情失败：{eastmoney_error}")
+        return cached_rows
+    raise RuntimeError(f"No kline data for {item.name} {item.secid}: {eastmoney_error}")
 
 
 def load_cached_klines(item: Item) -> list[dict[str, Any]]:
@@ -431,6 +578,35 @@ def decide_action(stock: dict[str, Any], sector: dict[str, Any], market_state: s
     return "正常观察", "未触发硬复查项"
 
 
+def validate_data_freshness() -> None:
+    required = [item for item in ITEMS if item.kind in {"stock", "index"}]
+    missing = [item.name for item in required if item.code not in DATA_AUDIT]
+    if missing:
+        raise RuntimeError(f"缺少数据质量记录：{', '.join(missing)}")
+
+    cached = [item.name for item in ITEMS if DATA_AUDIT[item.code]["是否缓存"] == "是"]
+    if cached:
+        raise RuntimeError(f"存在旧 Excel 缓存，拒绝发布：{', '.join(cached)}")
+
+    stock_dates = {
+        item.name: str(DATA_AUDIT[item.code]["最新行情日期"])
+        for item in ITEMS
+        if item.kind == "stock"
+    }
+    latest_date = max(stock_dates.values())
+    stale = [f"{name}={date}" for name, date in stock_dates.items() if date != latest_date]
+    if stale:
+        raise RuntimeError(f"四只股票行情日期不一致，最新日期为 {latest_date}：{', '.join(stale)}")
+
+    other_stale = [
+        f"{item.name}={DATA_AUDIT[item.code]['最新行情日期']}"
+        for item in ITEMS
+        if str(DATA_AUDIT[item.code]["最新行情日期"]) != latest_date
+    ]
+    if other_stale:
+        raise RuntimeError(f"指数或板块行情日期落后于股票日期 {latest_date}：{', '.join(other_stale)}")
+
+
 def rounded_row(row: dict[str, Any]) -> dict[str, Any]:
     result = {}
     for key, value in row.items():
@@ -544,8 +720,18 @@ def main() -> None:
     history_rows: list[dict[str, Any]] = []
     for item in ITEMS:
         summary, rows = analyze_item(item)
+        audit = DATA_AUDIT[item.code]
+        summary.update(
+            {
+                "数据来源": audit["数据来源"],
+                "是否缓存": audit["是否缓存"],
+                "数据说明": audit["说明"],
+            }
+        )
         summaries.append(rounded_row(summary))
         history_rows.extend(rows)
+
+    validate_data_freshness()
 
     stocks = [row for row in summaries if row["类别"] == "stock"]
     indices = [row for row in summaries if row["类别"] == "index"]
@@ -597,6 +783,8 @@ def main() -> None:
                 "板块环境": sector.get("环境判断"),
                 "大盘环境": market_state,
                 "20日相对板块": relative_sector,
+                "数据来源": stock["数据来源"],
+                "是否缓存": stock["是否缓存"],
                 "行动状态": action,
                 "复查原因": reason,
                 "明日重点": "看能否继续站稳MA20/MA60，并确认个股强弱是否得到板块配合。",
@@ -645,6 +833,7 @@ def main() -> None:
     write_sheet(wb.create_sheet("MA数据对比"), ma_rows)
     write_sheet(wb.create_sheet("均线高低点"), ma_range_rows)
     write_sheet(wb.create_sheet("大盘板块"), indices + list(sectors.values()))
+    write_sheet(wb.create_sheet("数据质量"), list(DATA_AUDIT.values()))
     write_sheet(wb.create_sheet("三轮复盘"), replay_rows)
     write_sheet(wb.create_sheet("原始日线"), [rounded_row(row) for row in history_rows])
     style_workbook(wb)

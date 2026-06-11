@@ -45,16 +45,29 @@ def read_sheet(wb, name: str) -> list[dict[str, Any]]:
 
 def build_payload(report_path: Path) -> dict[str, Any]:
     wb = load_workbook(report_path, data_only=True, read_only=True)
+    overview = read_sheet(wb, "今日总览")
+    quality = read_sheet(wb, "数据质量")
+    market_dates = sorted({str(row.get("日期")) for row in overview if row.get("日期")})
+    sources = sorted({str(row.get("数据来源")) for row in quality if row.get("数据来源")})
+    cache_items = [
+        str(row.get("名称"))
+        for row in quality
+        if row.get("是否缓存") == "是"
+    ]
     return {
         "meta": {
             "reportFile": report_path.name,
             "reportPath": str(report_path),
             "dashboardGeneratedAt": datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S CST"),
+            "latestMarketDate": market_dates[-1] if market_dates else None,
+            "dataSources": sources,
+            "cacheItems": cache_items,
         },
-        "overview": read_sheet(wb, "今日总览"),
+        "overview": overview,
         "maCompare": read_sheet(wb, "MA数据对比"),
         "maRanges": read_sheet(wb, "均线高低点"),
         "marketSectors": read_sheet(wb, "大盘板块"),
+        "dataQuality": quality,
         "review": read_sheet(wb, "三轮复盘"),
         "daily": read_sheet(wb, "原始日线"),
     }
@@ -554,7 +567,8 @@ def html_template(payload: dict[str, Any]) -> str:
       }});
     }}
     function renderMeta() {{
-      document.getElementById('metaText').textContent = `来源：${{DATA.meta.reportFile}} ｜ 生成：${{DATA.meta.dashboardGeneratedAt}}`;
+      const cacheText = DATA.meta.cacheItems?.length ? ` ｜ 缓存：${{DATA.meta.cacheItems.join('、')}}` : ' ｜ 无缓存';
+      document.getElementById('metaText').textContent = `行情日期：${{DATA.meta.latestMarketDate || '-'}} ｜ 来源：${{(DATA.meta.dataSources || []).join('、')}}${{cacheText}} ｜ 生成：${{DATA.meta.dashboardGeneratedAt}}`;
       document.getElementById('excelLink').href = DATA.meta.reportFile;
     }}
     function renderAll() {{

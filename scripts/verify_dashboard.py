@@ -16,10 +16,22 @@ if not payload_match:
     raise SystemExit("payload script not found")
 
 payload = json.loads(payload_match.group(1))
-required = ["overview", "maRanges", "daily", "marketSectors", "review"]
+required = ["overview", "maRanges", "daily", "marketSectors", "dataQuality", "review"]
 missing = [key for key in required if not payload.get(key)]
 if missing:
     raise SystemExit(f"missing payload sections: {missing}")
+
+stock_dates = {str(row.get("日期")) for row in payload["overview"] if row.get("日期")}
+if len(stock_dates) != 1:
+    raise SystemExit(f"stock dates are inconsistent: {sorted(stock_dates)}")
+
+stale_items = [
+    row.get("名称")
+    for row in payload["dataQuality"]
+    if row.get("是否缓存") == "是"
+]
+if stale_items:
+    raise SystemExit(f"data used Excel cache: {stale_items}")
 
 checks = {
     "trendCanvas": "trendCanvas" in html,
@@ -37,3 +49,6 @@ print("DASHBOARD_VERIFY_OK")
 print("overview", len(payload["overview"]))
 print("maRanges", len(payload["maRanges"]))
 print("daily", len(payload["daily"]))
+print("latestMarketDate", payload["meta"].get("latestMarketDate"))
+print("dataSources", payload["meta"].get("dataSources"))
+print("cacheItems", payload["meta"].get("cacheItems"))
